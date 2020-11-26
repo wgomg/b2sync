@@ -1,0 +1,84 @@
+#!/bin/bash
+
+readarray -td "/", DIR_ARRAY <<< "$BASH_SOURCE[0]"; unset 'DIR_ARRAY[-1]'; unset 'DIR_ARRAY[0]'
+SCRIPT_DIR=$(printf "/%s" "${DIR_ARRAY[@]}")
+CONFIG="$SCRIPT_DIR/config"
+
+if [ ! -f "$CONFIG" ]; then
+    exit
+fi
+
+. "$CONFIG"
+
+while IFS= read -r line
+do
+    readarray -td "=", varArray <<< "$line"
+    value="${varArray[-1]//[$'\t\n\r ']}"
+
+    if [[ "$value" == "" || "$value" == "()" ]]; then
+        echo "Empty variable: ${varArray[0]}"
+        exit
+    fi
+done < "$CONFIG"
+
+notify-send -t 20000 "Starting B2 sync"
+
+function getFileName () {
+    readarray -td "/", filePathArray <<< "$1";  unset 'filePathArray[-1]'
+    fileName="${filePathArray[-1]}"
+
+    echo "$fileName"
+}
+
+function prepareDirs () {
+    fileName=$(getFileName "$1")
+    lrztar -z -o "$SCRIPT_DIR/$fileName.tar.lrz" "$1"
+    gpg -v --encrypt --recipient "$GPG_RECIPIENT" "$SCRIPT_DIR/$fileName.tar.lrz"
+    rm -v "$SCRIPT_DIR/$fileName.tar.lrz"
+}
+
+currHashes=()
+
+for i in "${!SYNC_DIRS[@]}"
+do
+    fileName=$(getFileName "${SYNC_DIRS[$i]}")
+    uploaded+=("${fileName}")
+    tar -cvf "$SCRIPT_DIR/$fileName.tar" "${SYNC_DIRS[$i]}"
+    currHashes[$i]=$(sha512sum "$SCRIPT_DIR/$fileName.tar" | awk '{print $1;}')
+    rm -v "$SCRIPT_DIR/$fileName.tar"
+done
+
+PREV_HASHES="$SCRIPT_DIR/hashes"
+firstRun=false
+if [ ! -f "$PREV_HASHES" ]; then
+    printf "%s\n" "${currHashes[@]}" > "$PREV_HASHES"
+    firstRun=true
+fi
+
+currHashesLen=$(("${#currHashes[@]}" - 1))
+index=0
+while IFS= read -r line
+do
+    prevHash="$line"
+    currHash="${currHashes[$index]}"
+
+    if [[ "$firstRun" == true || "$prevHash" != "$currHash"  ]]; then
+        prepareDirs "${SYNC_DIRS[$index]}"
+    fi
+
+    ((index++))
+
+    if [[ "$index" -gt $currHashesLen ]]; then
+        break
+    fi
+
+done < "$PREV_HASHES"
+
+TEMP_DIR="$SCRIPT_DIR/b2-backup"
+
+mkdir "$TEMP_DIR"
+find "$SCRIPT_DIR" -name "*.gpg" -exec mv '{}' "$TEMP_DIR" \;
+b2 sync "$TEMP_DIR" "b2://$BUCKET_NAME/"
+m -rv "$TEMP_DIR"
+
+notify-send -t 20000 "B2 sync completed"
