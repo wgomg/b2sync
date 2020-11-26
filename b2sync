@@ -79,6 +79,6 @@ TEMP_DIR="$SCRIPT_DIR/b2-backup"
 mkdir "$TEMP_DIR"
 find "$SCRIPT_DIR" -name "*.gpg" -exec mv '{}' "$TEMP_DIR" \;
 b2 sync "$TEMP_DIR" "b2://$BUCKET_NAME/"
-m -rv "$TEMP_DIR"
+rm -rv "$TEMP_DIR"
 
 notify-send -t 20000 "B2 sync completed"
